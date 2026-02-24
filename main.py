@@ -87,6 +87,12 @@ async def start(message: Message):
         [
             InlineKeyboardButton(text="📦 Orders", callback_data="orders"),
             InlineKeyboardButton(text="🆘 Support", callback_data="support"),
+        ],
+        [
+            InlineKeyboardButton(
+                text="📢 Our Channel",
+                url="https://t.me/befit_products"
+            )
         ]
     ])
 
