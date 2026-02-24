@@ -281,7 +281,7 @@ async def callbacks(call: CallbackQuery):
         await call.message.answer(text)
 
     elif call.data == "support":
-        await call.message.answer("Contact support: @imdenyaa")
+        await call.message.answer("Contact support: @imdenya")
 
 # ---------------- PRE CHECKOUT ----------------
 
