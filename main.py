@@ -34,18 +34,6 @@ def init_db():
     conn = sqlite3.connect("befit.db")
     cursor = conn.cursor()
 
-    # Заказы
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS orders (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT,
-        product TEXT,
-        price INTEGER,
-        is_paid INTEGER DEFAULT 0
-    )
-    """)
-
-    # Товары
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,6 +41,24 @@ def init_db():
         description TEXT,
         price INTEGER,
         photo_id TEXT
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS cart (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT,
+        product_id INTEGER
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT,
+        product TEXT,
+        price INTEGER,
+        is_paid INTEGER DEFAULT 0
     )
     """)
 
@@ -105,9 +111,7 @@ async def add_product_photo(message: Message, state: FSMContext):
     if not message.photo:
         return await message.answer("Send a photo!")
 
-    photo_id = message.photo[-1].file_id
-    await state.update_data(photo_id=photo_id)
-
+    await state.update_data(photo_id=message.photo[-1].file_id)
     await message.answer("📝 Send product name")
     await state.set_state(AddProduct.name)
 
@@ -122,7 +126,7 @@ async def add_product_name(message: Message, state: FSMContext):
 @dp.message(AddProduct.description)
 async def add_product_description(message: Message, state: FSMContext):
     await state.update_data(description=message.text)
-    await message.answer("💰 Send price in dollars (example: 10)")
+    await message.answer("💰 Send price in dollars")
     await state.set_state(AddProduct.price)
 
 
@@ -151,9 +155,9 @@ async def add_product_price(message: Message, state: FSMContext):
     conn.commit()
     conn.close()
 
-    # 🔥 Публикация в канал
+    # Публикация в канал
     await bot.send_photo(
-        chat_id="@befit_products",
+        chat_id=CHANNEL_ID,
         photo=data["photo_id"],
         caption=f"""
 🔥 NEW PRODUCT
@@ -164,36 +168,11 @@ async def add_product_price(message: Message, state: FSMContext):
 
 💰 Price: {price/100}$
 
-🛒 Buy in our bot: @befitProduct_bot
+🛒 Buy in bot
 """
     )
 
-    await message.answer("✅ Product added and published in channel!")
-    await state.clear()
-    try:
-        price = int(float(message.text) * 100)
-    except:
-        return await message.answer("Enter valid number")
-
-    data = await state.get_data()
-
-    conn = sqlite3.connect("befit.db")
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT INTO products (name, description, price, photo_id)
-        VALUES (?, ?, ?, ?)
-    """, (
-        data["name"],
-        data["description"],
-        price,
-        data["photo_id"]
-    ))
-
-    conn.commit()
-    conn.close()
-
-    await message.answer("✅ Product added!")
+    await message.answer("✅ Product added and published!")
     await state.clear()
 
 # ---------------- CALLBACKS ----------------
@@ -201,10 +180,9 @@ async def add_product_price(message: Message, state: FSMContext):
 @dp.callback_query()
 async def callbacks(call: CallbackQuery):
     await call.answer()
-
     username = call.from_user.username or str(call.from_user.id)
 
-    # -------- CATALOG --------
+    # CATALOG
     if call.data == "catalog":
         conn = sqlite3.connect("befit.db")
         cursor = conn.cursor()
@@ -218,8 +196,8 @@ async def callbacks(call: CallbackQuery):
         for product_id, name, description, price, photo_id in products:
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
-                    text=f"🛒 Buy for {price/100}$",
-                    callback_data=f"buy_{product_id}"
+                    text=f"🛒 Add to cart {price/100}$",
+                    callback_data=f"addcart_{product_id}"
                 )]
             ])
 
@@ -229,49 +207,100 @@ async def callbacks(call: CallbackQuery):
                 reply_markup=keyboard
             )
 
-    # -------- BUY --------
-    elif call.data.startswith("buy_"):
+    # ADD TO CART
+    elif call.data.startswith("addcart_"):
         product_id = call.data.split("_")[1]
 
         conn = sqlite3.connect("befit.db")
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT name, price FROM products WHERE id=?",
-            (product_id,)
+            "INSERT INTO cart (username, product_id) VALUES (?, ?)",
+            (username, product_id)
         )
-        product = cursor.fetchone()
+        conn.commit()
         conn.close()
 
-        if not product:
+        await call.message.answer("🛒 Added to cart!")
+
+    # VIEW CART
+    elif call.data == "cart":
+        conn = sqlite3.connect("befit.db")
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT p.name, p.price
+            FROM cart c
+            JOIN products p ON c.product_id = p.id
+            WHERE c.username=?
+        """, (username,))
+
+        items = cursor.fetchall()
+        conn.close()
+
+        if not items:
+            return await call.message.answer("🛒 Cart is empty.")
+
+        text = "🛒 Your cart:\n\n"
+        total = 0
+
+        for name, price in items:
+            text += f"{name} - {price/100}$\n"
+            total += price
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"💳 Pay {total/100}$",
+                callback_data="pay_cart"
+            )]
+        ])
+
+        await call.message.answer(text, reply_markup=keyboard)
+
+    # PAY CART
+    elif call.data == "pay_cart":
+        conn = sqlite3.connect("befit.db")
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT p.name, p.price
+            FROM cart c
+            JOIN products p ON c.product_id = p.id
+            WHERE c.username=?
+        """, (username,))
+
+        items = cursor.fetchall()
+        conn.close()
+
+        if not items:
             return
 
-        name, price = product
-
-        prices = [LabeledPrice(label=name, amount=price)]
+        prices = [LabeledPrice(label=name, amount=price) for name, price in items]
 
         await bot.send_invoice(
             chat_id=call.message.chat.id,
-            title=name,
-            description=f"Payment for {name}",
-            payload=f"product_{product_id}",
+            title="Cart payment",
+            description="Payment for products",
+            payload="cart_payment",
             provider_token=PROVIDER_TOKEN,
             currency="USD",
             prices=prices
         )
 
-    # -------- ORDERS --------
+    # ORDERS
     elif call.data == "orders":
         conn = sqlite3.connect("befit.db")
         cursor = conn.cursor()
+
         cursor.execute(
             "SELECT product, is_paid FROM orders WHERE username=?",
             (username,)
         )
+
         orders = cursor.fetchall()
         conn.close()
 
         if not orders:
-            return await call.message.answer("No orders.")
+            return await call.message.answer("No orders yet.")
 
         text = "📦 Orders:\n\n"
         for product, paid in orders:
@@ -283,19 +312,16 @@ async def callbacks(call: CallbackQuery):
     elif call.data == "support":
         await call.message.answer("Contact support: @imdenya")
 
-# ---------------- PRE CHECKOUT ----------------
+# ---------------- PAYMENT ----------------
 
 @dp.pre_checkout_query()
 async def pre_checkout(pre_checkout_query: PreCheckoutQuery):
     await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
-# ---------------- SUCCESS PAYMENT ----------------
 
 @dp.message(F.successful_payment)
 async def successful_payment(message: Message):
-
     username = message.from_user.username or str(message.from_user.id)
-    product_name = message.successful_payment.invoice_payload
 
     conn = sqlite3.connect("befit.db")
     cursor = conn.cursor()
@@ -305,9 +331,11 @@ async def successful_payment(message: Message):
         VALUES (?, ?, ?, 1)
     """, (
         username,
-        product_name,
+        "Cart payment",
         message.successful_payment.total_amount
     ))
+
+    cursor.execute("DELETE FROM cart WHERE username=?", (username,))
 
     conn.commit()
     conn.close()
