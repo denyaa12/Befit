@@ -19,9 +19,9 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# ---------------- CONFIG ----------------
+# ================= CONFIG =================
 
-BOT_TOKEN = "8524579857:AAEfQUUJt8c33GXVXaq4_F6OZ2HYyZfLLPs"
+BOT_TOKEN = "AAEfQUUJt8c33GXVXaq4_F6OZ2HYyZfLLPs"
 PROVIDER_TOKEN = "7490307358:TEST:ImRx8Dbz36A0KLLx"
 ADMIN_ID = 867025267
 CHANNEL_ID = "@befit_products"
@@ -35,7 +35,7 @@ dp = Dispatcher(storage=MemoryStorage())
 
 db = None
 
-# ---------------- CSV INIT ----------------
+# ================= CSV INIT =================
 
 def init_csv():
     if not os.path.exists("orders.csv"):
@@ -49,10 +49,14 @@ def init_csv():
                 "Payment ID"
             ])
 
-# ---------------- DATABASE INIT ----------------
+# ================= DATABASE INIT =================
 
 async def init_db():
     global db
+
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL not set!")
+
     db = await asyncpg.create_pool(DATABASE_URL)
 
     async with db.acquire() as conn:
@@ -85,7 +89,7 @@ async def init_db():
         )
         """)
 
-# ---------------- FSM ----------------
+# ================= FSM =================
 
 class AddProduct(StatesGroup):
     photo = State()
@@ -93,52 +97,62 @@ class AddProduct(StatesGroup):
     description = State()
     price = State()
 
-# ---------------- START ----------------
+# ================= START =================
 
 @dp.message(Command("start"))
 async def start(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛍 Catalog", callback_data="catalog")],
-        [InlineKeyboardButton(text="🛒 Cart", callback_data="cart")],
-        [InlineKeyboardButton(text="📦 Orders", callback_data="orders")]
+        [
+            InlineKeyboardButton(text="🛍 Catalog", callback_data="catalog"),
+            InlineKeyboardButton(text="🛒 Cart", callback_data="cart")
+        ],
+        [
+            InlineKeyboardButton(text="📦 Orders", callback_data="orders"),
+            InlineKeyboardButton(text="🆘 Support", callback_data="support")
+        ],
+        [
+            InlineKeyboardButton(
+                text="📢 Our Channel",
+                url="https://t.me/befit_products"
+            )
+        ]
     ])
 
     await message.answer(
-        f"Hello {message.from_user.first_name}",
+        f"Hello {message.from_user.first_name}, choose:",
         reply_markup=keyboard
     )
 
-# ---------------- ADD PRODUCT ----------------
+# ================= ADD PRODUCT =================
 
 @dp.message(Command("addproduct"))
 async def add_product_start(message: Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID:
         return await message.answer("❌ You are not admin")
 
-    await message.answer("📷 Send photo")
+    await message.answer("📷 Send product photo")
     await state.set_state(AddProduct.photo)
-
 
 @dp.message(AddProduct.photo)
 async def add_product_photo(message: Message, state: FSMContext):
-    await state.update_data(photo_id=message.photo[-1].file_id)
-    await message.answer("Name?")
-    await state.set_state(AddProduct.name)
+    if not message.photo:
+        return await message.answer("Send photo!")
 
+    await state.update_data(photo_id=message.photo[-1].file_id)
+    await message.answer("Send product name")
+    await state.set_state(AddProduct.name)
 
 @dp.message(AddProduct.name)
 async def add_product_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text)
-    await message.answer("Description?")
+    await message.answer("Send description")
     await state.set_state(AddProduct.description)
-
 
 @dp.message(AddProduct.description)
 async def add_product_description(message: Message, state: FSMContext):
     await state.update_data(description=message.text)
-    await message.answer("Price in USD?")
+    await message.answer("Send price in USD")
     await state.set_state(AddProduct.price)
-
 
 @dp.message(AddProduct.price)
 async def add_product_price(message: Message, state: FSMContext):
@@ -155,7 +169,6 @@ async def add_product_price(message: Message, state: FSMContext):
             VALUES ($1, $2, $3, $4)
         """, data["name"], data["description"], price, data["photo_id"])
 
-    # Публикация в канал
     await bot.send_photo(
         chat_id=CHANNEL_ID,
         photo=data["photo_id"],
@@ -172,10 +185,10 @@ async def add_product_price(message: Message, state: FSMContext):
 """
     )
 
-    await message.answer("✅ Product added!")
+    await message.answer("✅ Product added & published!")
     await state.clear()
 
-# ---------------- CATALOG ----------------
+# ================= CATALOG =================
 
 @dp.callback_query(F.data == "catalog")
 async def catalog(call: CallbackQuery):
@@ -183,12 +196,12 @@ async def catalog(call: CallbackQuery):
         products = await conn.fetch("SELECT * FROM products")
 
     if not products:
-        return await call.message.answer("No products yet")
+        return await call.message.answer("No products yet.")
 
     for product in products:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
-                text=f"🛒 Buy {product['price']/100}$",
+                text=f"🛒 Add to cart {product['price']/100}$",
                 callback_data=f"buy_{product['id']}"
             )]
         ])
@@ -199,53 +212,141 @@ async def catalog(call: CallbackQuery):
             reply_markup=keyboard
         )
 
-# ---------------- BUY ----------------
+# ================= ADD TO CART =================
 
 @dp.callback_query(F.data.startswith("buy_"))
-async def buy(call: CallbackQuery):
+async def add_to_cart(call: CallbackQuery):
     product_id = int(call.data.split("_")[1])
+    username = call.from_user.username or str(call.from_user.id)
 
     async with db.acquire() as conn:
-        product = await conn.fetchrow(
-            "SELECT * FROM products WHERE id=$1",
+        await conn.execute(
+            "INSERT INTO cart (username, product_id) VALUES ($1, $2)",
+            username,
             product_id
         )
 
+    await call.answer("Added to cart 🛒", show_alert=True)
+
+# ================= VIEW CART =================
+
+@dp.callback_query(F.data == "cart")
+async def view_cart(call: CallbackQuery):
+    username = call.from_user.username or str(call.from_user.id)
+
+    async with db.acquire() as conn:
+        items = await conn.fetch("""
+            SELECT p.name, p.price
+            FROM cart c
+            JOIN products p ON c.product_id = p.id
+            WHERE c.username=$1
+        """, username)
+
+    if not items:
+        return await call.message.answer("🛒 Cart is empty.")
+
+    text = "🛒 Your cart:\n\n"
+    total = 0
+
+    for item in items:
+        text += f"{item['name']} - {item['price']/100}$\n"
+        total += item["price"]
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=f"💳 Pay {total/100}$",
+            callback_data="pay_cart"
+        )]
+    ])
+
+    await call.message.answer(text, reply_markup=keyboard)
+
+# ================= PAY CART =================
+
+@dp.callback_query(F.data == "pay_cart")
+async def pay_cart(call: CallbackQuery):
+    username = call.from_user.username or str(call.from_user.id)
+
+    async with db.acquire() as conn:
+        items = await conn.fetch("""
+            SELECT p.name, p.price
+            FROM cart c
+            JOIN products p ON c.product_id = p.id
+            WHERE c.username=$1
+        """, username)
+
+    if not items:
+        return
+
+    prices = [
+        LabeledPrice(label=item["name"], amount=item["price"])
+        for item in items
+    ]
+
     await bot.send_invoice(
         chat_id=call.from_user.id,
-        title=product["name"],
-        description=product["description"],
-        payload="payment",
+        title="Cart payment",
+        description="Payment for products",
+        payload="cart_payment",
         provider_token=PROVIDER_TOKEN,
         currency="USD",
-        prices=[LabeledPrice(
-            label=product["name"],
-            amount=product["price"]
-        )]
+        prices=prices
     )
 
-# ---------------- PAYMENT ----------------
+# ================= SUPPORT =================
+
+@dp.callback_query(F.data == "support")
+async def support(call: CallbackQuery):
+    await call.message.answer("Contact support: @imdenya")
+
+# ================= ORDERS =================
+
+@dp.callback_query(F.data == "orders")
+async def view_orders(call: CallbackQuery):
+    username = call.from_user.username or str(call.from_user.id)
+
+    async with db.acquire() as conn:
+        orders = await conn.fetch("""
+            SELECT amount, payment_id, created_at
+            FROM orders
+            WHERE username=$1
+            ORDER BY created_at DESC
+        """, username)
+
+    if not orders:
+        return await call.message.answer("No orders yet.")
+
+    text = "📦 Your orders:\n\n"
+
+    for order in orders:
+        text += f"💰 {order['amount']/100}$ | ID: {order['payment_id']}\n"
+
+    await call.message.answer(text)
+
+# ================= PAYMENT =================
 
 @dp.pre_checkout_query()
 async def pre_checkout(pre_checkout_query: PreCheckoutQuery):
     await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
-
 @dp.message(F.successful_payment)
 async def successful_payment(message: Message):
-    username = message.from_user.username or "NoUsername"
+    username = message.from_user.username or str(message.from_user.id)
     user_id = message.from_user.id
     amount = message.successful_payment.total_amount
     payment_id = message.successful_payment.telegram_payment_charge_id
 
-    # запись в PostgreSQL
     async with db.acquire() as conn:
         await conn.execute("""
             INSERT INTO orders (username, user_id, amount, payment_id)
             VALUES ($1, $2, $3, $4)
         """, username, user_id, amount, payment_id)
 
-    # экспорт в CSV
+        await conn.execute(
+            "DELETE FROM cart WHERE username=$1",
+            username
+        )
+
     with open("orders.csv", "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
@@ -256,9 +357,9 @@ async def successful_payment(message: Message):
             payment_id
         ])
 
-    await message.answer("✅ Payment successful!")
+    await message.answer("✅ Payment successful! Order saved.")
 
-# ---------------- RUN ----------------
+# ================= RUN =================
 
 async def main():
     init_csv()
