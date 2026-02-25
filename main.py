@@ -21,7 +21,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 # ================= CONFIG =================
 
-BOT_TOKEN = "AAEfQUUJt8c33GXVXaq4_F6OZ2HYyZfLLPs"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+bot = Bot(token=BOT_TOKEN)
 PROVIDER_TOKEN = "7490307358:TEST:ImRx8Dbz36A0KLLx"
 ADMIN_ID = 867025267
 CHANNEL_ID = "@befit_products"
