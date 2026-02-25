@@ -26,7 +26,7 @@ PROVIDER_TOKEN = "7490307358:TEST:ImRx8Dbz36A0KLLx"
 ADMIN_ID = 867025267
 CHANNEL_ID = "@befit_products"
 
-DATABASE_URL = os.getenv("postgresql://postgres:jjYcrnhdIHqpqdnEiBEDChBjauBRvFMx@postgres.railway.internal:5432/railway")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 logging.basicConfig(level=logging.INFO)
 
