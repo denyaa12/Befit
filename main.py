@@ -174,7 +174,7 @@ async def add_product_price(message: Message, state: FSMContext):
 
 💰 Price: {price/100}$
 
-🛒 Buy in bot
+🛒 to make a purchase, write here @befitProduct_bot
 """
     )
 
