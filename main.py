@@ -4,6 +4,7 @@ import asyncpg
 import os
 import csv
 from datetime import datetime
+from aiogram.types import FSInputFile
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
@@ -188,6 +189,42 @@ async def add_product_price(message: Message, state: FSMContext):
 
     await message.answer("✅ Product added & published!")
     await state.clear()
+
+
+# ================= export to cvs =================
+
+@dp.message(Command("export"))
+async def export_orders(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return await message.answer("❌ You are not admin")
+
+    async with db.acquire() as conn:
+        orders = await conn.fetch("""
+            SELECT username, user_id, amount, payment_id, created_at
+            FROM orders
+            ORDER BY created_at DESC
+        """)
+
+    if not orders:
+        return await message.answer("No orders yet.")
+
+    # создаём временный CSV
+    filename = "export_orders.csv"
+
+    with open(filename, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Date", "Username", "User ID", "Amount (USD)", "Payment ID"])
+
+        for order in orders:
+            writer.writerow([
+                order["created_at"],
+                order["username"],
+                order["user_id"],
+                order["amount"] / 100,
+                order["payment_id"]
+            ])
+
+    await message.answer_document(FSInputFile(filename))
 
 # ================= CATALOG =================
 
