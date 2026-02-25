@@ -2,6 +2,10 @@ import asyncio
 import logging
 import sqlite3
 
+import csv
+import os
+from datetime import datetime
+
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
     Message,
@@ -30,42 +34,19 @@ dp = Dispatcher(storage=MemoryStorage())
 
 # ---------------- DATABASE ----------------
 
-def init_db():
-    conn = sqlite3.connect("befit.db")
-    cursor = conn.cursor()
+def init_csv():
+    if not os.path.exists("orders.csv"):
+        with open("orders.csv", "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "Date",
+                "Username",
+                "User ID",
+                "Amount (USD)",
+                "Payment ID"
+            ])
 
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        description TEXT,
-        price INTEGER,
-        photo_id TEXT
-    )
-    """)
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS cart (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT,
-        product_id INTEGER
-    )
-    """)
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS orders (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT,
-        product TEXT,
-        price INTEGER,
-        is_paid INTEGER DEFAULT 0
-    )
-    """)
-
-    conn.commit()
-    conn.close()
-
-init_db()
+init_csv()
 
 # ---------------- FSM ----------------
 
@@ -327,26 +308,31 @@ async def pre_checkout(pre_checkout_query: PreCheckoutQuery):
 
 @dp.message(F.successful_payment)
 async def successful_payment(message: Message):
-    username = message.from_user.username or str(message.from_user.id)
+    username = message.from_user.username or "NoUsername"
+    user_id = message.from_user.id
+    amount = message.successful_payment.total_amount / 100
+    payment_id = message.successful_payment.telegram_payment_charge_id
+    date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    # ✅ Запись в CSV
+    with open("orders.csv", "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            date,
+            username,
+            user_id,
+            amount,
+            payment_id
+        ])
+
+    # ❌ Убираем из корзины
     conn = sqlite3.connect("befit.db")
     cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT INTO orders (username, product, price, is_paid)
-        VALUES (?, ?, ?, 1)
-    """, (
-        username,
-        "Cart payment",
-        message.successful_payment.total_amount
-    ))
-
     cursor.execute("DELETE FROM cart WHERE username=?", (username,))
-
     conn.commit()
     conn.close()
 
-    await message.answer("✅ Payment successful!")
+    await message.answer("✅ Payment successful! Order saved.")
 
 # ---------------- RUN ----------------
 
