@@ -12,8 +12,6 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    LabeledPrice,
-    PreCheckoutQuery
 )
 from aiogram.filters import Command
 from aiogram.fsm.state import StatesGroup, State
@@ -354,11 +352,12 @@ async def view_cart(call: CallbackQuery):
 
     await call.message.answer(text, reply_markup=keyboard)
 
-# ================= PAY CART =================
+# ================= PAY CART (CASH) =================
 
 @dp.callback_query(F.data == "pay_cart")
 async def pay_cart(call: CallbackQuery):
     username = call.from_user.username or str(call.from_user.id)
+    user_id = call.from_user.id
 
     async with db.acquire() as conn:
         items = await conn.fetch("""
@@ -371,20 +370,50 @@ async def pay_cart(call: CallbackQuery):
     if not items:
         return
 
-    prices = [
-        LabeledPrice(label=item["name"], amount=item["price"])
-        for item in items
-    ]
+    total = sum(item["price"] for item in items)
+    order_lines = "\n".join(f"• {item['name']} — {item['price']/100}$" for item in items)
 
-    await bot.send_invoice(
-        chat_id=call.from_user.id,
-        title="Cart payment",
-        description="Payment for products",
-        payload="cart_payment",
-        provider_token=PROVIDER_TOKEN,
-        currency="USD",
-        prices=prices
+    # Сообщение пользователю
+    await call.message.answer(
+        f"💵 <b>Оплата наличными</b>\n\n"
+        f"Ваш заказ:\n{order_lines}\n\n"
+        f"💰 <b>Итого: {total/100}$</b>\n\n"
+        f"Свяжитесь с нами для оплаты: @imdenya\n"
+        f"Укажите ваш username при обращении.",
+        parse_mode="HTML"
     )
+
+    # Уведомление админу
+    await bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"🛎 <b>Новый заказ!</b>\n\n"
+             f"👤 Пользователь: @{username} (ID: {user_id})\n\n"
+             f"🛍 Товары:\n{order_lines}\n\n"
+             f"💰 Сумма: {total/100}$",
+        parse_mode="HTML"
+    )
+
+    # Сохраняем заказ в БД
+    async with db.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO orders (username, user_id, amount, payment_id)
+            VALUES ($1, $2, $3, $4)
+        """, username, user_id, total, f"CASH-{user_id}-{int(datetime.now().timestamp())}")
+
+        await conn.execute(
+            "DELETE FROM cart WHERE username=$1", username
+        )
+
+    # Сохраняем в CSV
+    with open("orders.csv", "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            datetime.now(),
+            username,
+            user_id,
+            total / 100,
+            f"CASH-{user_id}"
+        ])
 
 # ================= SUPPORT =================
 
@@ -416,41 +445,7 @@ async def view_orders(call: CallbackQuery):
 
     await call.message.answer(text)
 
-# ================= PAYMENT =================
 
-@dp.pre_checkout_query()
-async def pre_checkout(pre_checkout_query: PreCheckoutQuery):
-    await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
-
-@dp.message(F.successful_payment)
-async def successful_payment(message: Message):
-    username = message.from_user.username or str(message.from_user.id)
-    user_id = message.from_user.id
-    amount = message.successful_payment.total_amount
-    payment_id = message.successful_payment.telegram_payment_charge_id
-
-    async with db.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO orders (username, user_id, amount, payment_id)
-            VALUES ($1, $2, $3, $4)
-        """, username, user_id, amount, payment_id)
-
-        await conn.execute(
-            "DELETE FROM cart WHERE username=$1",
-            username
-        )
-
-    with open("orders.csv", "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            datetime.now(),
-            username,
-            user_id,
-            amount / 100,
-            payment_id
-        ])
-
-    await message.answer("✅ Payment successful! Order saved.")
 
 # ================= RUN =================
 
