@@ -191,7 +191,7 @@ async def add_product_price(message: Message, state: FSMContext):
     await state.clear()
 
 
-# ================= export to cvs =================
+# ================= EXPORT TO CSV =================
 
 @dp.message(Command("export"))
 async def export_orders(message: Message):
@@ -208,7 +208,6 @@ async def export_orders(message: Message):
     if not orders:
         return await message.answer("No orders yet.")
 
-    # создаём временный CSV
     filename = "export_orders.csv"
 
     with open(filename, "w", newline="", encoding="utf-8") as f:
@@ -236,19 +235,59 @@ async def catalog(call: CallbackQuery):
     if not products:
         return await call.message.answer("No products yet.")
 
+    is_admin = call.from_user.id == ADMIN_ID
+
     for product in products:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text=f"🛒 Add to cart {product['price']/100}$",
-                callback_data=f"buy_{product['id']}"
-            )]
-        ])
+        # Кнопка "Добавить в корзину" для всех
+        buttons = [[InlineKeyboardButton(
+            text=f"🛒 Add to cart {product['price']/100}$",
+            callback_data=f"buy_{product['id']}"
+        )]]
+
+        # Кнопка удаления — только для админа
+        if is_admin:
+            buttons.append([InlineKeyboardButton(
+                text="🗑 Delete product",
+                callback_data=f"delete_{product['id']}"
+            )])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
         await call.message.answer_photo(
             product["photo_id"],
             caption=f"{product['name']}\n\n{product['description']}",
             reply_markup=keyboard
         )
+
+# ================= DELETE PRODUCT =================
+
+@dp.callback_query(F.data.startswith("delete_"))
+async def delete_product(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        return await call.answer("❌ You are not admin", show_alert=True)
+
+    product_id = int(call.data.split("_")[1])
+
+    async with db.acquire() as conn:
+        product = await conn.fetchrow(
+            "SELECT name FROM products WHERE id=$1", product_id
+        )
+
+        if not product:
+            return await call.answer("Product not found.", show_alert=True)
+
+        # Удаляем товар из корзин пользователей
+        await conn.execute(
+            "DELETE FROM cart WHERE product_id=$1", product_id
+        )
+
+        # Удаляем сам товар
+        await conn.execute(
+            "DELETE FROM products WHERE id=$1", product_id
+        )
+
+    await call.message.delete()
+    await call.answer(f"✅ '{product['name']}' deleted.", show_alert=True)
 
 # ================= ADD TO CART =================
 
