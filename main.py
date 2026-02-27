@@ -68,8 +68,15 @@ async def init_db():
             name TEXT,
             description TEXT,
             price INTEGER,
-            photo_id TEXT
+            photo_id TEXT,
+            channel_message_id BIGINT
         )
+        """)
+
+        # Добавляем колонку если уже существует старая таблица без неё
+        await conn.execute("""
+            ALTER TABLE products
+            ADD COLUMN IF NOT EXISTS channel_message_id BIGINT
         """)
 
         await conn.execute("""
@@ -171,7 +178,7 @@ async def add_product_price(message: Message, state: FSMContext):
             VALUES ($1, $2, $3, $4)
         """, data["name"], data["description"], price, data["photo_id"])
 
-    await bot.send_photo(
+    channel_msg = await bot.send_photo(
         chat_id=CHANNEL_ID,
         photo=data["photo_id"],
         caption=f"""
@@ -186,6 +193,15 @@ async def add_product_price(message: Message, state: FSMContext):
 🛒 @befitProduct_bot
 """
     )
+
+    # Сохраняем ID сообщения в канале
+    async with db.acquire() as conn:
+        await conn.execute(
+            "UPDATE products SET channel_message_id=$1 WHERE name=$2 AND description=$3",
+            channel_msg.message_id,
+            data["name"],
+            data["description"]
+        )
 
     await message.answer("✅ Product added & published!")
     await state.clear()
@@ -270,7 +286,7 @@ async def delete_product(call: CallbackQuery):
 
     async with db.acquire() as conn:
         product = await conn.fetchrow(
-            "SELECT name FROM products WHERE id=$1", product_id
+            "SELECT name, channel_message_id FROM products WHERE id=$1", product_id
         )
 
         if not product:
@@ -285,6 +301,13 @@ async def delete_product(call: CallbackQuery):
         await conn.execute(
             "DELETE FROM products WHERE id=$1", product_id
         )
+
+    # Удаляем сообщение из канала
+    if product["channel_message_id"]:
+        try:
+            await bot.delete_message(chat_id=CHANNEL_ID, message_id=product["channel_message_id"])
+        except Exception as e:
+            logging.warning(f"Не удалось удалить сообщение из канала: {e}")
 
     await call.message.delete()
     await call.answer(f"✅ '{product['name']}' deleted.", show_alert=True)
