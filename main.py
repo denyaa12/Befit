@@ -172,12 +172,7 @@ async def add_product_price(message: Message, state: FSMContext):
 
     data = await state.get_data()
 
-    async with db.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO products (name, description, price, photo_id)
-            VALUES ($1, $2, $3, $4)
-        """, data["name"], data["description"], price, data["photo_id"])
-
+    # Сначала публикуем в канал, получаем message_id
     channel_msg = await bot.send_photo(
         chat_id=CHANNEL_ID,
         photo=data["photo_id"],
@@ -194,14 +189,12 @@ async def add_product_price(message: Message, state: FSMContext):
 """
     )
 
-    # Сохраняем ID сообщения в канале
+    # Сохраняем товар вместе с channel_message_id за один запрос
     async with db.acquire() as conn:
-        await conn.execute(
-            "UPDATE products SET channel_message_id=$1 WHERE name=$2 AND description=$3",
-            channel_msg.message_id,
-            data["name"],
-            data["description"]
-        )
+        await conn.execute("""
+            INSERT INTO products (name, description, price, photo_id, channel_message_id)
+            VALUES ($1, $2, $3, $4, $5)
+        """, data["name"], data["description"], price, data["photo_id"], channel_msg.message_id)
 
     await message.answer("✅ Product added & published!")
     await state.clear()
